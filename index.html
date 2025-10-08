@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Tournament App - Admin Panel</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome CDN -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+
+    <style>
+        body { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; overflow-x: hidden; }
+        .page { display: none; } .page.active { display: block; }
+        ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: #e2e8f0; } ::-webkit-scrollbar-thumb { background: #0d9488; border-radius: 5px;}
+        input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number] { -moz-appearance: textfield; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 font-sans">
+
+    <div id="admin-app-container" class="max-w-md mx-auto min-h-screen bg-white shadow-2xl">
+
+        <div id="initial-loader" class="flex items-center justify-center h-screen"><div class="text-center"><i class="fas fa-spinner fa-spin fa-2x text-teal-500"></i><p class="mt-2 text-gray-600">Loading Admin Panel...</p></div></div>
+        
+        <main id="main-content" class="pb-20">
+            <div id="adminLoginPage" class="page"></div>
+            <div id="adminDashboardPage" class="page"></div>
+            <div id="adminTournamentPage" class="page"></div>
+            <div id="adminManageTournamentPage" class="page"></div>
+            <div id="adminUsersPage" class="page"></div>
+            <div id="adminSettingsPage" class="page"></div>
+        </main>
+
+        <nav id="admin-bottom-nav" class="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-sm border-t border-gray-200 max-w-md mx-auto" style="display: none;">
+            <div class="flex justify-around p-3">
+                <a href="#" class="admin-nav-item text-center text-gray-500" onclick="navigateTo('adminDashboardPage')"><i class="fas fa-tachometer-alt fa-lg"></i><span class="block text-xs mt-1">Dashboard</span></a>
+                <a href="#" class="admin-nav-item text-center text-gray-500" onclick="navigateTo('adminTournamentPage')"><i class="fas fa-plus-circle fa-lg"></i><span class="block text-xs mt-1">Tournaments</span></a>
+                <a href="#" class="admin-nav-item text-center text-gray-500" onclick="navigateTo('adminUsersPage')"><i class="fas fa-users fa-lg"></i><span class="block text-xs mt-1">Users</span></a>
+                <a href="#" class="admin-nav-item text-center text-gray-500" onclick="navigateTo('adminSettingsPage')"><i class="fas fa-cogs fa-lg"></i><span class="block text-xs mt-1">Settings</span></a>
+            </div>
+        </nav>
+    </div>
+
+    <div id="toast" class="fixed top-5 right-5 text-white py-2 px-4 rounded-lg shadow-lg" style="display: none; z-index: 1000;"></div>
+
+    <script>
+        document.addEventListener('contextmenu', event => event.preventDefault());
+
+        const firebaseConfig = {
+  apiKey: "AIzaSyAcTwnaDK4ZyUL5Xz1HgAjYpkOvG_PWDNg",
+  authDomain: "tonament-cda4a.firebaseapp.com",
+  databaseURL: "https://tonament-cda4a-default-rtdb.firebaseio.com",
+  projectId: "tonament-cda4a",
+  storageBucket: "tonament-cda4a.firebasestorage.app",
+  messagingSenderId: "93569534373",
+  appId: "1:93569534373:web:29f93d2287dffc3e4e404c"
+};
+
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.database();
+
+        let currentAdminData = null;
+        let currentTournamentId = null;
+
+        function navigateTo(pageId, data = null) {
+            document.getElementById('initial-loader').style.display = 'none';
+            if (pageId === 'adminManageTournamentPage' && data) currentTournamentId = data.tournamentId;
+            
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            const targetPage = document.getElementById(pageId);
+            if (targetPage) {
+                targetPage.classList.add('active');
+                loadPageContent(pageId);
+            }
+            const nav = document.getElementById('admin-bottom-nav');
+            if(nav) nav.style.display = auth.currentUser ? 'block' : 'none';
+            
+            document.querySelectorAll('.admin-nav-item').forEach(item => {
+                const isActive = item.getAttribute('onclick').includes(pageId);
+                item.classList.toggle('text-teal-500', isActive);
+                item.classList.toggle('text-gray-500', !isActive);
+            });
+            window.scrollTo(0, 0);
+        }
+
+        function showToast(message, isError = false) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `fixed top-5 right-5 text-white py-2 px-4 rounded-lg shadow-lg ${isError ? 'bg-gradient-to-r from-red-500 to-orange-500' : 'bg-gradient-to-r from-green-500 to-teal-500'}`;
+            toast.style.display = 'block';
+            setTimeout(() => { toast.style.display = 'none'; }, 3000);
+        }
+
+        function formatCurrency(amount) {
+            return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0 }).format(amount);
+        }
+
+        auth.onAuthStateChanged(async user => {
+            if (user) {
+                currentAdminData = { uid: user.uid, email: user.email };
+                navigateTo('adminDashboardPage');
+            } else {
+                currentAdminData = null;
+                navigateTo('adminLoginPage');
+            }
+        });
+        
+        function loadPageContent(pageId) {
+            const pageContainer = document.getElementById(pageId);
+            if (!pageContainer) return;
+            switch (pageId) {
+                case 'adminLoginPage': renderAdminLoginPage(pageContainer); break;
+                case 'adminDashboardPage': renderAdminDashboardPage(pageContainer); break;
+                case 'adminTournamentPage': renderAdminTournamentPage(pageContainer); break;
+                case 'adminManageTournamentPage': renderAdminManageTournamentPage(pageContainer); break;
+                case 'adminUsersPage': renderAdminUsersPage(pageContainer); break;
+                case 'adminSettingsPage': renderAdminSettingsPage(pageContainer); break;
+            }
+        }
+        
+        function renderAdminLoginPage(container) {
+            container.innerHTML = `
+                <div class="p-6 h-screen flex flex-col justify-center bg-gray-50">
+                    <h1 class="text-4xl font-bold text-center mb-2 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-teal-500">Admin Panel</h1>
+                    <p class="text-center text-gray-500 mb-8">Tournament App Management</p>
+                    <div class="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+                        <form id="adminLoginForm" class="space-y-4">
+                            <input type="email" id="adminLoginEmail" placeholder="Email" class="w-full p-3 bg-gray-50 rounded border border-gray-300" required>
+                            <input type="password" id="adminLoginPassword" placeholder="Password" class="w-full p-3 bg-gray-50 rounded border border-gray-300" required>
+                            <button type="submit" class="w-full text-white bg-gradient-to-r from-blue-500 to-teal-400 hover:from-blue-600 hover:to-teal-500 p-3 rounded font-semibold transition-all duration-300">Login</button>
+                        </form>
+                    </div>
+                </div>`;
+            document.getElementById('adminLoginForm').addEventListener('submit', (e) => {
+                e.preventDefault();
+                auth.signInWithEmailAndPassword(e.target.adminLoginEmail.value, e.target.adminLoginPassword.value).catch(err => showToast(err.message, true));
+            });
+        }
+
+        async function renderAdminDashboardPage(container) {
+            container.innerHTML = `<div class="p-4 space-y-6 bg-gray-50 min-h-screen">
+                <div class="flex justify-between items-center"><h2 class="text-2xl font-bold">Admin Dashboard</h2><button onclick="logout()" class="text-sm text-white bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 px-3 py-1 rounded-full font-semibold">Logout</button></div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-blue-50 border border-blue-200 p-4 rounded-lg shadow-sm flex items-center justify-between"><div><p class="text-2xl font-bold text-blue-600" id="total-users">...</p><p class="text-sm text-blue-800">Total Users</p></div><i class="fas fa-users text-3xl text-blue-300"></i></div>
+                    <div class="bg-teal-50 border border-teal-200 p-4 rounded-lg shadow-sm flex items-center justify-between"><div><p class="text-2xl font-bold text-teal-600" id="total-tournaments">...</p><p class="text-sm text-teal-800">Tournaments</p></div><i class="fas fa-trophy text-3xl text-teal-300"></i></div>
+                    <div class="bg-green-50 border border-green-200 p-4 rounded-lg shadow-sm flex items-center justify-between"><div><p class="text-xl font-bold text-green-600" id="total-prize">...</p><p class="text-sm text-green-800">Prize Won</p></div><i class="fas fa-gift text-3xl text-green-300"></i></div>
+                    <div class="bg-orange-50 border border-orange-200 p-4 rounded-lg shadow-sm flex items-center justify-between"><div><p class="text-xl font-bold text-orange-600" id="total-revenue">...</p><p class="text-sm text-orange-800">Revenue</p></div><i class="fas fa-chart-line text-3xl text-orange-300"></i></div>
+                </div>
+                <button onclick="navigateTo('adminTournamentPage')" class="w-full text-white bg-gradient-to-r from-blue-500 to-teal-400 hover:from-blue-600 hover:to-teal-500 p-4 rounded-lg font-bold text-lg shadow-lg shadow-teal-500/20"><i class="fas fa-plus-circle mr-2"></i>Create New Tournament</button>
+            </div>`;
+            const users = (await db.ref('users').once('value')).numChildren();
+            const tournamentsSnapshot = await db.ref('tournaments').once('value');
+            document.getElementById('total-users').textContent = users;
+            document.getElementById('total-tournaments').textContent = tournamentsSnapshot.numChildren();
+            const tournaments = tournamentsSnapshot.val() || {};
+            let totalPrize = 0, totalRevenue = 0;
+            Object.values(tournaments).forEach(t => {
+                if (t.status === 'Completed' && t.winner_id) {
+                    totalPrize += t.prize_pool;
+                    totalRevenue += (t.entry_fee * (t.commission_percentage / 100)) * (Object.keys(t.participants || {}).length);
+                }
+            });
+            document.getElementById('total-prize').textContent = formatCurrency(totalPrize);
+            document.getElementById('total-revenue').textContent = formatCurrency(totalRevenue);
+        }
+
+        async function renderAdminTournamentPage(container) {
+            container.innerHTML = `<div class="p-4 space-y-6 bg-gray-50 min-h-screen">
+                <div class="bg-white p-4 rounded-lg shadow-md border border-gray-200">
+                    <h2 class="text-2xl font-bold mb-4">Create Tournament</h2>
+                    <form id="createTournamentForm" class="space-y-4">
+                        <input type="text" id="t-title" placeholder="Title" class="w-full p-3 bg-gray-50 rounded border border-gray-300" required>
+                        <input type="text" id="t-game-name" placeholder="Game Name (e.g., General Knowledge Quiz)" class="w-full p-3 bg-gray-50 rounded border border-gray-300" required>
+                        <select id="t-game-type" class="w-full p-3 bg-gray-50 rounded border border-gray-300" required>
+                            <option value="">Select Game Type</option><option value="quiz">Quiz Game</option><option value="rock_paper_scissors">Rock, Paper, Scissors</option>
+                        </select>
+                        <div id="quiz-builder" class="border border-gray-200 p-3 rounded-lg bg-gray-50" style="display:none;">
+                            <h3 class="text-lg font-semibold mb-2 text-center text-gray-700">Quiz Builder</h3>
+                            <div id="questions-container" class="space-y-3"></div>
+                            <button type="button" id="add-question-btn" class="mt-2 w-full text-white bg-gradient-to-r from-blue-500 to-teal-400 p-2 rounded text-sm">Add Question</button>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <input type="number" id="t-fee" placeholder="Entry Fee (₹)" class="w-full p-3 bg-gray-50 rounded border border-gray-300" required>
+                            <input type="number" id="t-prize" placeholder="Prize Pool (₹)" class="w-full p-3 bg-gray-50 rounded border border-gray-300" required>
+                        </div>
+                        <input type="datetime-local" id="t-time" class="w-full p-3 bg-gray-50 rounded border border-gray-300" required>
+                        <input type="number" id="t-commission" placeholder="Commission %" class="w-full p-3 bg-gray-50 rounded border border-gray-300" required>
+                        <button type="submit" class="w-full text-white bg-gradient-to-r from-green-500 to-teal-500 hover:from-green-600 hover:to-teal-600 p-3 rounded font-semibold">Create Tournament</button>
+                    </form>
+                </div>
+                <h2 class="text-2xl font-bold mt-8">All Tournaments</h2>
+                <div id="all-tournaments-list" class="space-y-3">Loading...</div>
+            </div>`;
+            document.getElementById('createTournamentForm').addEventListener('submit', createTournament);
+            document.getElementById('t-game-type').addEventListener('change', e => document.getElementById('quiz-builder').style.display = e.target.value === 'quiz' ? 'block' : 'none');
+            document.getElementById('add-question-btn').addEventListener('click', addQuestionField);
+            addQuestionField();
+            const listEl = document.getElementById('all-tournaments-list');
+            const tournaments = (await db.ref('tournaments').once('value')).val();
+            if(!tournaments) { listEl.innerHTML = `<p class="text-center text-gray-500 py-4">No tournaments created yet.</p>`; return; }
+            listEl.innerHTML = Object.entries(tournaments).map(([id, t]) => `
+                <div class="bg-teal-50 border border-teal-200 p-3 rounded-lg shadow-sm flex items-center justify-between">
+                    <div><p class="font-bold text-teal-800">${t.title} <span class="text-xs font-semibold text-gray-500">(${t.status})</span></p><p class="text-sm text-gray-500">${t.game_name}</p></div>
+                    <div>
+                        <button onclick="navigateTo('adminManageTournamentPage', {tournamentId: '${id}'})" class="bg-gradient-to-r from-blue-500 to-teal-400 text-white px-3 py-1 rounded-md text-sm font-semibold">Manage</button>
+                        <button onclick="deleteTournament('${id}')" class="bg-gradient-to-r from-red-500 to-orange-500 text-white px-3 py-1 rounded-md text-sm ml-2"><i class="fas fa-trash"></i></button>
+                    </div>
+                </div>`).join('');
+        }
+
+        function addQuestionField() {
+            const container = document.getElementById('questions-container');
+            const questionIndex = container.children.length;
+            const questionDiv = document.createElement('div');
+            questionDiv.className = 'bg-white p-3 rounded-lg border border-gray-300';
+            questionDiv.innerHTML = `
+                <input type="text" placeholder="Question ${questionIndex + 1}" class="w-full p-2 bg-gray-50 rounded mb-2 border border-gray-300" name="q-text-${questionIndex}" required>
+                <input type="text" placeholder="Option 1" class="w-full p-2 bg-gray-50 rounded mb-1 border border-gray-300" name="q-opt1-${questionIndex}" required>
+                <input type="text" placeholder="Option 2" class="w-full p-2 bg-gray-50 rounded mb-1 border border-gray-300" name="q-opt2-${questionIndex}" required>
+                <input type="text" placeholder="Option 3" class="w-full p-2 bg-gray-50 rounded mb-1 border border-gray-300" name="q-opt3-${questionIndex}" required>
+                <input type="number" placeholder="Correct Option (1-3)" class="w-full p-2 bg-gray-50 rounded border border-gray-300" name="q-correct-${questionIndex}" min="1" max="3" required>
+            `;
+            container.appendChild(questionDiv);
+        }
+
+        async function renderAdminManageTournamentPage(container) {
+            if (!currentTournamentId) { container.innerHTML = `<p class="text-center p-8">Error: No tournament selected.</p>`; return; }
+            container.innerHTML = `<div class="p-4 space-y-6 bg-gray-50 min-h-screen" id="manage-tournament-content"><div class="text-center"><i class="fas fa-spinner fa-spin fa-2x text-teal-500"></i></div></div>`;
+            const contentEl = document.getElementById('manage-tournament-content');
+            const tSnapshot = await db.ref(`tournaments/${currentTournamentId}`).once('value');
+            const tournament = tSnapshot.val();
+            const participants = (await db.ref(`participants/${currentTournamentId}`).once('value')).val() || {};
+            let participantOptions = '', participantListHtml = '';
+            for (const pId in participants) {
+                const user = (await db.ref(`users/${pId}`).once('value')).val();
+                if(user) {
+                    participantOptions += `<option value="${pId}">${user.username}</option>`;
+                    const gameResult = participants[pId].gameResult || 'Not Played';
+                    participantListHtml += `<li class="bg-gray-100 p-2 rounded flex justify-between border border-gray-200"><span>${user.username}</span><span class="font-bold text-teal-600">${gameResult}</span></li>`;
+                }
+            }
+            contentEl.innerHTML = `
+                <div class="flex items-center gap-4"><button onclick="navigateTo('adminTournamentPage')" class="text-gray-500"><i class="fas fa-arrow-left fa-lg"></i></button><h2 class="text-2xl font-bold">${tournament.title}</h2></div>
+                <div class="bg-white border border-gray-200 p-4 rounded-lg shadow-sm space-y-3">
+                    <h3 class="font-bold text-lg">Room Details & Status</h3>
+                    <form id="roomDetailsForm" class="space-y-3">
+                        <input type="text" id="t-roomid" placeholder="Room ID" value="${tournament.room_id || ''}" class="w-full p-2 bg-gray-50 rounded border border-gray-300">
+                        <input type="text" id="t-roompass" placeholder="Room Password" value="${tournament.room_password || ''}" class="w-full p-2 bg-gray-50 rounded border border-gray-300">
+                        <select id="t-status" class="w-full p-2 bg-gray-50 rounded border border-gray-300"><option value="Upcoming" ${tournament.status === 'Upcoming' && 'selected'}>Upcoming</option><option value="Live" ${tournament.status === 'Live' && 'selected'}>Live</option><option value="Completed" ${tournament.status === 'Completed' && 'selected'}>Completed</option></select>
+                        <button type="submit" class="w-full text-white bg-gradient-to-r from-blue-500 to-teal-400 p-2 rounded font-semibold">Update Details</button>
+                    </form>
+                </div>
+                <div class="bg-white border border-gray-200 p-4 rounded-lg shadow-sm space-y-3 ${tournament.status === 'Completed' ? 'hidden' : ''}">
+                     <h3 class="font-bold text-lg">Declare Winner</h3>
+                     <form id="winnerForm" class="space-y-3">
+                        <select id="winner-select" class="w-full p-2 bg-gray-50 rounded border border-gray-300"><option value="">Select a winner...</option>${participantOptions}</select>
+                        <button type="submit" class="w-full text-white bg-gradient-to-r from-green-500 to-teal-500 p-2 rounded font-semibold">Declare & Distribute Prize</button>
+                     </form>
+                </div>
+                ${tournament.status === 'Completed' ? `<div class="bg-green-100 text-green-800 p-3 rounded-lg text-center border border-green-300">This tournament is completed.</div>` : ''}
+                <div class="bg-white border border-gray-200 p-4 rounded-lg shadow-sm">
+                    <h3 class="font-bold text-lg mb-2">Participants (${Object.keys(participants).length})</h3>
+                    <ul class="space-y-1 max-h-60 overflow-y-auto">${participantListHtml || '<li class="text-gray-500">No participants yet.</li>'}</ul>
+                </div>`;
+            document.getElementById('roomDetailsForm').addEventListener('submit', updateRoomDetails);
+            document.getElementById('winnerForm').addEventListener('submit', declareWinner);
+        }
+
+        async function renderAdminUsersPage(container) {
+            container.innerHTML = `<div class="p-4 bg-gray-50 min-h-screen"><h2 class="text-2xl font-bold mb-4">All Users</h2><div id="users-list" class="space-y-2">Loading...</div></div>`;
+            const users = (await db.ref('users').once('value')).val();
+            document.getElementById('users-list').innerHTML = users ? Object.values(users).map(u => `
+                <div class="bg-blue-50 border border-blue-200 p-3 rounded-lg shadow-sm">
+                    <p class="font-bold text-blue-800">${u.username}</p><p class="text-sm text-gray-500">${u.email}</p>
+                    <p class="text-sm font-semibold mt-1">Balance: <span class="text-green-600">${formatCurrency(u.wallet_balance || 0)}</span></p>
+                </div>`).join('') : `<p>No users found.</p>`;
+        }
+
+        function renderAdminSettingsPage(container) {
+            container.innerHTML = `<div class="p-4 space-y-6 bg-gray-50 min-h-screen">
+                <h2 class="text-2xl font-bold">Admin Settings</h2>
+                <div class="bg-teal-50 border border-teal-200 p-4 rounded-lg shadow-sm"><p class="text-gray-500">Admin Email</p><p class="text-lg text-teal-800">${currentAdminData?.email || 'N/A'}</p></div>
+                <div class="bg-white border border-gray-200 p-4 rounded-lg shadow-sm"><h3 class="text-lg font-bold mb-2">Change Password</h3><button onclick="changePassword()" class="w-full text-white bg-gradient-to-r from-blue-500 to-teal-400 p-3 rounded-lg font-semibold">Send Password Reset Email</button></div>
+                 <a href="index.html" class="block w-full text-center text-gray-700 bg-gray-200 hover:bg-gray-300 p-3 rounded-lg font-semibold">Go to User Panel</a>
+            </div>`;
+        }
+
+        function logout() { auth.signOut(); }
+        function changePassword() { auth.sendPasswordResetEmail(auth.currentUser.email).then(() => showToast(`Password reset link sent.`)).catch(err => showToast(err.message, true)); }
+        
+        async function createTournament(e) {
+            e.preventDefault();
+            const form = e.target;
+            const newTournament = {
+                title: form['t-title'].value, game_name: form['t-game-name'].value, game_type: form['t-game-type'].value,
+                entry_fee: Number(form['t-fee'].value), prize_pool: Number(form['t-prize'].value),
+                match_time: new Date(form['t-time'].value).toISOString(), commission_percentage: Number(form['t-commission'].value),
+                status: 'Upcoming', created_at: new Date().toISOString()
+            };
+            if (newTournament.game_type === 'quiz') {
+                newTournament.quiz = [];
+                const qCount = document.getElementById('questions-container').children.length;
+                for (let i = 0; i < qCount; i++) {
+                    newTournament.quiz.push({
+                        question: form[`q-text-${i}`].value,
+                        options: [ form[`q-opt1-${i}`].value, form[`q-opt2-${i}`].value, form[`q-opt3-${i}`].value ],
+                        correct: Number(form[`q-correct-${i}`].value) - 1
+                    });
+                }
+            }
+            await db.ref('tournaments').push(newTournament);
+            showToast('Tournament created successfully!');
+            renderAdminTournamentPage(document.getElementById('adminTournamentPage'));
+        }
+        
+        async function deleteTournament(tournamentId) {
+            if (confirm('Are you sure you want to delete this tournament?')) {
+                await db.ref().update({ [`/tournaments/${tournamentId}`]: null, [`/participants/${tournamentId}`]: null });
+                showToast('Tournament deleted.');
+                renderAdminTournamentPage(document.getElementById('adminTournamentPage'));
+            }
+        }
+        
+        async function updateRoomDetails(e) {
+            e.preventDefault();
+            await db.ref(`tournaments/${currentTournamentId}`).update({
+                room_id: document.getElementById('t-roomid').value,
+                room_password: document.getElementById('t-roompass').value,
+                status: document.getElementById('t-status').value
+            });
+            showToast('Tournament details updated!');
+            renderAdminManageTournamentPage(document.getElementById('adminManageTournamentPage'));
+        }
+
+        async function declareWinner(e) {
+            e.preventDefault();
+            const winnerId = document.getElementById('winner-select').value;
+            if (!winnerId) return showToast('Please select a winner!', true);
+            const tournament = (await db.ref(`tournaments/${currentTournamentId}`).once('value')).val();
+            const winner = (await db.ref(`users/${winnerId}`).once('value')).val();
+            const newBalance = (winner.wallet_balance || 0) + tournament.prize_pool;
+            const updates = {
+                [`/tournaments/${currentTournamentId}/status`]: 'Completed', [`/tournaments/${currentTournamentId}/winner_id`]: winnerId,
+                [`/participants/${currentTournamentId}/${winnerId}/status`]: 'Winner', [`/users/${winnerId}/wallet_balance`]: newBalance,
+                [`/transactions/${winnerId}/${db.ref().child('transactions').push().key}`]: {
+                    amount: tournament.prize_pool, type: 'credit', description: `Prize for winning: ${tournament.title}`, created_at: new Date().toISOString()
+                }
+            };
+            await db.ref().update(updates);
+            showToast('Winner declared and prize distributed!');
+            renderAdminManageTournamentPage(document.getElementById('adminManageTournamentPage'));
+        }
+    </script>
+</body>
+</html>
